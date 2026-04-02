@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
+import os
 import re
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -60,3 +64,75 @@ class RuleBasedLLM(LLM):
         if match:
             return match.group(1).strip()
         return None
+
+
+@dataclass
+class LLMConfig:
+    backend: str = "rule_based"
+    model: str = "rule-based-v1"
+    temperature: float = 0.0
+    max_tokens: int = 1024
+
+
+class LLMConfigLoader:
+    """Load LLM configuration from JSON file and environment variables.
+
+    Priority (high -> low):
+    1. Environment variables with `HARNESS_LLM_` prefix.
+    2. JSON file pointed by `HARNESS_LLM_CONFIG`.
+    3. Defaults from `LLMConfig`.
+    """
+
+    ENV_PREFIX = "HARNESS_LLM_"
+
+    @classmethod
+    def load(cls) -> LLMConfig:
+        config = LLMConfig()
+
+        config_path = os.getenv("HARNESS_LLM_CONFIG")
+        if config_path:
+            cls._merge_from_file(config, Path(config_path))
+
+        cls._merge_from_env(config)
+        return config
+
+    @classmethod
+    def _merge_from_file(cls, config: LLMConfig, path: Path) -> None:
+        if not path.exists():
+            raise FileNotFoundError(f"LLM config file not found: {path}")
+
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("LLM config file must be a JSON object")
+
+        cls._apply_dict(config, payload)
+
+    @classmethod
+    def _merge_from_env(cls, config: LLMConfig) -> None:
+        env_data: dict[str, Any] = {}
+
+        if backend := os.getenv(f"{cls.ENV_PREFIX}BACKEND"):
+            env_data["backend"] = backend
+        if model := os.getenv(f"{cls.ENV_PREFIX}MODEL"):
+            env_data["model"] = model
+        if temperature := os.getenv(f"{cls.ENV_PREFIX}TEMPERATURE"):
+            env_data["temperature"] = float(temperature)
+        if max_tokens := os.getenv(f"{cls.ENV_PREFIX}MAX_TOKENS"):
+            env_data["max_tokens"] = int(max_tokens)
+
+        cls._apply_dict(config, env_data)
+
+    @staticmethod
+    def _apply_dict(config: LLMConfig, payload: dict[str, Any]) -> None:
+        for key in ("backend", "model", "temperature", "max_tokens"):
+            if key in payload:
+                setattr(config, key, payload[key])
+
+
+def create_llm(config: LLMConfig) -> LLM:
+    backend = config.backend.lower().strip()
+
+    if backend == "rule_based":
+        return RuleBasedLLM()
+
+    raise ValueError(f"Unsupported LLM backend: {config.backend}")
