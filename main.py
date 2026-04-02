@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent.context_manager import ContextManager
-from agent.llm import RuleBasedLLM
+from agent.llm import LLMConfig, LLMConfigLoader, create_llm
 from agent.permission import PermissionSystem
 from agent.query_engine import QueryEngine
 from agent.tool_registry import ToolRegistry
@@ -11,7 +11,9 @@ from agent.tools.file_read import FileReadTool
 from agent.tools.python_exec import PythonExecTool
 
 
-def build_engine() -> QueryEngine:
+def build_engine(llm_config: LLMConfig | None = None) -> QueryEngine:
+    llm_config = llm_config or LLMConfigLoader.load()
+
     context = ContextManager(
         system_prompt=(
             "You are an execution harness. Use tools when needed, then provide a final answer."
@@ -19,6 +21,7 @@ def build_engine() -> QueryEngine:
         memory_blocks=[
             "Harness focuses on execution loop, not chat UX.",
             "Use explicit tool calls with {type, name, args}.",
+            f"LLM backend={llm_config.backend}, model={llm_config.model}, temp={llm_config.temperature}",
         ],
     )
 
@@ -29,7 +32,7 @@ def build_engine() -> QueryEngine:
     return QueryEngine(
         context_manager=context,
         tool_registry=registry,
-        llm=RuleBasedLLM(),
+        llm=create_llm(llm_config),
         permission_system=PermissionSystem(),
         max_turns=6,
     )
@@ -44,9 +47,13 @@ def main() -> None:
         encoding="utf-8",
     )
 
-    engine = build_engine()
+    llm_config = LLMConfigLoader.load()
+    engine = build_engine(llm_config)
     task = "请读取文件 'sample_note.txt' 并总结关键点。"
     result = engine.run(task)
+
+    print("=== LLM Config ===")
+    print(llm_config)
 
     print("=== Task ===")
     print(task)
